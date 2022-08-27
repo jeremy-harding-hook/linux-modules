@@ -1,0 +1,8 @@
+# Kbuild
+# This file contains the build instructions for the module.
+# See: https://www.kernel.org/doc/html/latest/kbuild/makefiles.html
+
+# set output location
+
+obj-m := node-finder.o 
+
