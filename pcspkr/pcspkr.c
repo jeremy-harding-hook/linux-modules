@@ -49,19 +49,37 @@ MODULE_ALIAS("platform:pcspkr");
 
 #define TRUE 1
 #define FALSE 0
+#define INCLUDE_TESTING_CODE FALSE
+
 static void print_device_details(struct device *device, bool children);
+
+#if INCLUDE_TESTING_CODE
 static void get_led_device(struct class *class);
 static int class_match_name(struct class *class, const void *name);
 static struct device *find_led_dev(const char *name);
+#endif
 
 static int pcspkr_event(struct input_dev *dev, unsigned int type,
 		unsigned int code, int value)
 {
+	/* TODO: clean up all the stuff not to be compiled, fix license/readme at
+	 * top, actually flash power led (index=0).
+	 * Additionally, I need to decide on a mapping scheme from Hz to flash.
+	 * Normally, it seems a beep is achieved by calling a tone with a given
+	 * pitch (500 Hz in XTerm, 750 Hz in my native console) then stopping with
+	 * a value of zero sent first to the tone and then to the bell (hence 3
+	 * calls per beep). For now maybe just a pitch-independent solution of
+	 * turning the led on when it's a pitch, and off otherwise?
+	 */
 	static int number_of_calls = 0;
 	struct device *device;
 	printk(KERN_DEBUG "Starting to beep! This is beep number %d.\n",
 			++number_of_calls);
+	printk(KERN_DEBUG "Type input: %d\n", type);
+	printk(KERN_DEBUG "Code input: %d\n", code);
+	printk(KERN_DEBUG "Value input: %d\n", value);
 
+#if INCLUDE_TESTING_CODE
 	if(!dev){
 		printk(KERN_DEBUG "input_dev NULL, so just returning 0\n");
 		return 0;
@@ -77,7 +95,45 @@ static int pcspkr_event(struct input_dev *dev, unsigned int type,
 		printk(KERN_DEBUG "Looking at new parent...");
 		device = device->parent;
 	}while(device);
+#else
+	unsigned int count = 0;
+	unsigned long flags;
 
+	if (type != EV_SND)
+		return -EINVAL;
+
+	switch (code) {
+	case SND_BELL:
+		if (value)
+			value = 1000;
+		break;
+	case SND_TONE:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (value > 20 && value < 32767)
+		count = PIT_TICK_RATE / value;
+#if FALSE
+	raw_spin_lock_irqsave(&i8253_lock, flags);
+
+	if (count) {
+		/* set command for counter 2, 2 byte write */
+		outb_p(0xB6, 0x43);
+		/* select desired HZ */
+		outb_p(count & 0xff, 0x42);
+		outb((count >> 8) & 0xff, 0x42);
+		/* enable counter 2 */
+		outb_p(inb_p(0x61) | 3, 0x61);
+	} else {
+		/* disable counter 2 */
+		outb(inb_p(0x61) & 0xFC, 0x61);
+	}
+
+	raw_spin_unlock_irqrestore(&i8253_lock, flags);
+#endif
+#endif
 	printk(KERN_DEBUG "End of beep handling for beep number %d.\n",
 			number_of_calls);
 	return 0;
@@ -130,6 +186,7 @@ static void print_device_details(struct device *device, bool children){
 	}
 }
 
+#if INCLUDE_TESTING_CODE
 static void get_led_device(struct class *class){
 	// Get the input9 from class "input"
 	// TODO: Somehow check all the divices for some other identifier (input9
@@ -211,6 +268,7 @@ static struct device *find_led_dev(const char *name)
 {
 	return bus_find_device(&platform_bus_type, NULL, name, device_match_name);
 }
+#endif
 
 static int pcspkr_probe(struct platform_device *dev)
 {
