@@ -13,14 +13,9 @@
  *  p.s. I really wish they'd go back to nice green and blue indicators, with
  *  the occasional amber.
  *
- * 	Largely due to my unfamiliarity with creating drivers, this is loosely
- * 	based on pcspkr.c by Vojtech Pavlik <vojtech@ucw.cz>, which was distrubuted
- * 	under GPL-2.0-only with version 5.18.10 of the Linux kernel. I obtained it 
- * 	from https://www.kernel.org/
- *
- * 	Because of the small size and large differences in intent and functionality,
- * 	I will provide this source directly rather than a patch file unless
- * 	otherwise requested.
+ * 	This driver is based on pcspkr.c by Vojtech Pavlik <vojtech@ucw.cz>, which
+ * 	was distrubuted	under GPL-2.0-only with version 5.18.10 of the Linux kernel.
+ * 	I obtained it from https://www.kernel.org/
  *
  *  Copyright (c) 2022 Jeremy Harding Hook
  *  Copyright (c) 2002 Vojtech Pavlik
@@ -53,51 +48,27 @@ MODULE_ALIAS("platform:pcspkr");
 
 static void print_device_details(struct device *device, bool children);
 
-#if INCLUDE_TESTING_CODE
-static void get_led_device(struct class *class);
-static int class_match_name(struct class *class, const void *name);
-static struct device *find_led_dev(const char *name);
-#endif
-
+#define MIN_FLASH_MSECS 3000
 static int pcspkr_event(struct input_dev *dev, unsigned int type,
 		unsigned int code, int value)
 {
-	/* TODO: clean up all the stuff not to be compiled, fix license/readme at
-	 * top, actually flash power led (index=0).
-	 * Additionally, I need to decide on a mapping scheme from Hz to flash.
-	 * Normally, it seems a beep is achieved by calling a tone with a given
-	 * pitch (500 Hz in XTerm, 750 Hz in my native console) then stopping with
-	 * a value of zero sent first to the tone and then to the bell (hence 3
-	 * calls per beep). For now maybe just a pitch-independent solution of
-	 * turning the led on when it's a pitch, and off otherwise?
+	/* TODO: figure out why the light is only flashing some of the time and is
+	 * so slow to respond. Investigate if there's a better approach.
+	 * No, led_set_brightness_sync is not the answer (it locks up the CPU to
+	 * predictable results).
 	 */
 	static int number_of_calls = 0;
-	struct device *device;
+	struct led_classdev *power_led = &tpacpi_get_led(0)->led_classdev;
+	static unsigned int min_led_off_msecs = 0;
+	unsigned int msecs_now = 0;
+	unsigned long blink_msecs = 0;
+	unsigned long blink_msecs_off = 3000;
+
 	printk(KERN_DEBUG "Starting to beep! This is beep number %d.\n",
 			++number_of_calls);
 	printk(KERN_DEBUG "Type input: %d\n", type);
 	printk(KERN_DEBUG "Code input: %d\n", code);
 	printk(KERN_DEBUG "Value input: %d\n", value);
-
-#if INCLUDE_TESTING_CODE
-	if(!dev){
-		printk(KERN_DEBUG "input_dev NULL, so just returning 0\n");
-		return 0;
-	}
-
-	printk(KERN_DEBUG "Input device name: %s\n", dev->name);
-	device = &dev->dev;
-	do
-	{
-		print_device_details(device, FALSE);
-		if(class_match_name(device->class, "input"))
-			get_led_device(device->class);
-		printk(KERN_DEBUG "Looking at new parent...");
-		device = device->parent;
-	}while(device);
-#else
-	unsigned int count = 0;
-	unsigned long flags;
 
 	if (type != EV_SND)
 		return -EINVAL;
@@ -114,26 +85,29 @@ static int pcspkr_event(struct input_dev *dev, unsigned int type,
 	}
 
 	if (value > 20 && value < 32767)
-		count = PIT_TICK_RATE / value;
-#if FALSE
-	raw_spin_lock_irqsave(&i8253_lock, flags);
-
-	if (count) {
-		/* set command for counter 2, 2 byte write */
-		outb_p(0xB6, 0x43);
-		/* select desired HZ */
-		outb_p(count & 0xff, 0x42);
-		outb((count >> 8) & 0xff, 0x42);
-		/* enable counter 2 */
-		outb_p(inb_p(0x61) | 3, 0x61);
-	} else {
-		/* disable counter 2 */
-		outb(inb_p(0x61) & 0xFC, 0x61);
+	{
+		printk(KERN_DEBUG "Turning led on!\n");
+		led_set_brightness( power_led, power_led->max_brightness);
+		min_led_off_msecs = jiffies_to_msecs(jiffies) + MIN_FLASH_MSECS;
+	}
+	else
+	{
+		printk(KERN_DEBUG "Turning led off!\n");
+		msecs_now  = jiffies_to_msecs(jiffies);
+		if(msecs_now > min_led_off_msecs)
+			led_set_brightness(power_led, LED_OFF);
+		else
+		{
+			printk(KERN_DEBUG "Hang on, it's not been on long enough. \
+					Blinking.\n");
+			blink_msecs = min_led_off_msecs - msecs_now;
+			led_blink_set_oneshot(power_led,
+					&blink_msecs,
+					&blink_msecs_off,
+					FALSE);
+		}
 	}
 
-	raw_spin_unlock_irqrestore(&i8253_lock, flags);
-#endif
-#endif
 	printk(KERN_DEBUG "End of beep handling for beep number %d.\n",
 			number_of_calls);
 	return 0;
@@ -186,93 +160,8 @@ static void print_device_details(struct device *device, bool children){
 	}
 }
 
-#if INCLUDE_TESTING_CODE
-static void get_led_device(struct class *class){
-	// Get the input9 from class "input"
-	// TODO: Somehow check all the divices for some other identifier (input9
-	// isn't constant)
-	int i = 0;
-	int digits = 1;
-	int sacrifice;
-	struct device *device;
-	char *name;
-	struct led_classdev *led;
-	/*do
-	  {
-	  name = kmalloc(sizeof(char) * (5 + digits), GFP_KERNEL);
-	  if(!name)
-	  {
-	  printk(KERN_WARNING "Out of memory! Aborting search for input "
-	  "devices.\n");
-	  return;
-	  }
-	  sprintf(name, "input%d", i);
-	  device = class_find_device(class, NULL, name,
-	  device_match_name);	
-	  if(device)
-	  {	
-	  printk(KERN_DEBUG "Found input%d device!\n", i);
-	  print_device_details(device);
-	  led = devm_of_led_get(device, 0);
-	  if(IS_ERR(led))
-	  printk(KERN_DEBUG "Not an led device.\n");
-	  else
-	  printk(KERN_DEBUG "This is an led device!\n");
-	// TODO: try using bus type to get the correct device?
-	put_device(device);
-	}
-	else
-	printk(KERN_DEBUG "Failed to find input%d.\n", i);
-	kfree(name);
-	i++;
-	sacrifice = i;
-	digits = 0;
-	while(sacrifice != 0){
-	sacrifice = sacrifice/10;
-	digits++;
-	}
-	}while(i < 100);*/
-
-	printk(KERN_DEBUG "Trying to use the bus to get the right device...");
-	device  = find_led_dev("thinkpad_acpi");
-	//device = find_led_dev("tpacpi::power");
-	if(device)
-	{
-		printk(KERN_DEBUG "Device found!!!");
-		led = devm_of_led_get(device, 0);
-		if(IS_ERR(led))
-			printk(KERN_DEBUG "Not an led device.\n");
-		else
-			printk(KERN_DEBUG "This is an led device!\n");
-		print_device_details(device, TRUE);
-		put_device(device);
-	}
-	else
-		printk(KERN_DEBUG "Device not found");
-}
-
-static int custom_match_dev(struct device *dev, void *data)
-{
-	/* not sure if this is needed or useful... */
-	const char *name = data;
-	return sysfs_streq(name, dev->of_node->name);
-}
-
-static int class_match_name(struct class *class, const void *name){
-	if(!class)
-		return 0;
-	return sysfs_streq(class->name, name);
-}
-
-static struct device *find_led_dev(const char *name)
-{
-	return bus_find_device(&platform_bus_type, NULL, name, device_match_name);
-}
-#endif
-
 static int pcspkr_probe(struct platform_device *dev)
 {
-	// Add something saving the device for the LED
 	struct input_dev *pcspkr_dev;
 	int err;
 

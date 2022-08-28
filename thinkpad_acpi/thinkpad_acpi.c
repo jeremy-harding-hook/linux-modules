@@ -5783,8 +5783,7 @@ static acpi_handle led_handle;
  * TPACPI_LED_NUMLEDS, so accessing beyond this may have...undesireable
  * consiquences.
  */
-struct tpacpi_led_classdev *tpacpi_leds;
-EXPORT_SYMBOL(tpacpi_leds);
+static struct tpacpi_led_classdev *tpacpi_leds;
 static enum led_status_t tpacpi_led_state_cache[TPACPI_LED_NUMLEDS];
 static const char * const tpacpi_led_names[TPACPI_LED_NUMLEDS] = {
 	/* there's a limit of 19 chars + NULL before 2.6.26 */
@@ -5803,6 +5802,20 @@ static const char * const tpacpi_led_names[TPACPI_LED_NUMLEDS] = {
 	"tpacpi::thinkvantage",
 };
 #define TPACPI_SAFE_LEDS	0x1481U
+
+/**
+ * Gets the led specified by the index.
+ * \param index The index of the led to be obtained. Note the maximum value is
+ * equal to TPACPI_LED_NUMLEDS minus one.
+ * \returns The tpacpi_led_classdev* requested, or NULL if the index is out of
+ * range.
+ */
+struct tpacpi_led_classdev *tpacpi_get_led(const unsigned int index){
+	if(unlikely(index >= TPACPI_LED_NUMLEDS))
+		return NULL;
+	return tpacpi_leds + index;
+}
+EXPORT_SYMBOL_GPL(tpacpi_get_led);
 
 static inline bool tpacpi_is_led_restricted(const unsigned int led)
 {

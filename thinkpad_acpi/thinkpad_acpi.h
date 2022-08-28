@@ -22,3 +22,7 @@ struct tpacpi_led_classdev {
 	int led;
 };
 
+/**
+ * \brief Gets an led controlled by the thinkpad acpi.
+ */ 
+struct tpacpi_led_classdev *tpacpi_get_led(unsigned int index);
