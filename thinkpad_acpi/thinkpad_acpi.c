@@ -5927,6 +5927,7 @@ static int led_sysfs_blink_set(struct led_classdev *led_cdev,
 	struct tpacpi_led_classdev *data = container_of(led_cdev,
 			struct tpacpi_led_classdev, led_classdev);
 
+	printk(KERN_DEBUG "Trying to blink %lu on, %lu off", *delay_on, *delay_off);
 	/* Can we choose the flash rate? */
 	if (*delay_on == 0 && *delay_off == 0) {
 		/* yes. set them to the hardware blink rate (1 Hz) */

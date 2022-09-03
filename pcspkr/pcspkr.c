@@ -35,6 +35,9 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/leds.h>
+#include <linux/interrupt.h>
+#include <linux/hrtimer.h>
+#include <linux/sched.h>
 #include "../thinkpad_acpi/thinkpad_acpi.h"
 
 MODULE_AUTHOR("Jeremy Harding Hook <jeremyhhook@gmail.com>");
@@ -45,10 +48,13 @@ MODULE_ALIAS("platform:pcspkr");
 #define TRUE 1
 #define FALSE 0
 #define INCLUDE_TESTING_CODE FALSE
+#define BEEP_DURATION_SECS 2
+#define BEEP_DURATION_NANSECS 0
 
 static void print_device_details(struct device *device, bool children);
+static struct hrtimer terminator;
+static struct led_classdev *power_led;
 
-#define MIN_FLASH_MSECS 3000
 static int pcspkr_event(struct input_dev *dev, unsigned int type,
 		unsigned int code, int value)
 {
@@ -58,11 +64,11 @@ static int pcspkr_event(struct input_dev *dev, unsigned int type,
 	 * predictable results).
 	 */
 	static int number_of_calls = 0;
-	struct led_classdev *power_led = &tpacpi_get_led(0)->led_classdev;
-	static unsigned int min_led_off_msecs = 0;
-	unsigned int msecs_now = 0;
-	unsigned long blink_msecs = 0;
-	unsigned long blink_msecs_off = 3000;
+	unsigned long blink_msecs_on = 250;
+	unsigned long blink_msecs_off = 250;
+	static ktime_t beep_duration = 0;
+	if(!beep_duration)
+		beep_duration = ktime_set(BEEP_DURATION_SECS, BEEP_DURATION_NANSECS);
 
 	printk(KERN_DEBUG "Starting to beep! This is beep number %d.\n",
 			++number_of_calls);
@@ -87,30 +93,24 @@ static int pcspkr_event(struct input_dev *dev, unsigned int type,
 	if (value > 20 && value < 32767)
 	{
 		printk(KERN_DEBUG "Turning led on!\n");
-		led_set_brightness( power_led, power_led->max_brightness);
-		min_led_off_msecs = jiffies_to_msecs(jiffies) + MIN_FLASH_MSECS;
+		hrtimer_cancel(&terminator);
+		led_blink_set(power_led, &blink_msecs_on, &blink_msecs_off);
+		hrtimer_start(&terminator, beep_duration, HRTIMER_MODE_REL);
 	}
 	else
 	{
-		printk(KERN_DEBUG "Turning led off!\n");
-		msecs_now  = jiffies_to_msecs(jiffies);
-		if(msecs_now > min_led_off_msecs)
-			led_set_brightness(power_led, LED_OFF);
-		else
-		{
-			printk(KERN_DEBUG "Hang on, it's not been on long enough. \
-					Blinking.\n");
-			blink_msecs = min_led_off_msecs - msecs_now;
-			led_blink_set_oneshot(power_led,
-					&blink_msecs,
-					&blink_msecs_off,
-					FALSE);
-		}
+		printk(KERN_DEBUG "Ignoring beep end.\n");
 	}
 
 	printk(KERN_DEBUG "End of beep handling for beep number %d.\n",
 			number_of_calls);
 	return 0;
+}
+
+static enum hrtimer_restart terminate_flasher(struct hrtimer *terminator)
+{
+	led_set_brightness(power_led, LED_OFF);
+	return HRTIMER_NORESTART;
 }
 
 static int handle_child(struct device *dev, void *data)
@@ -188,7 +188,9 @@ static int pcspkr_probe(struct platform_device *dev)
 	}
 
 	platform_set_drvdata(dev, pcspkr_dev);
-
+	hrtimer_init(&terminator, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	terminator.function = terminate_flasher;
+	power_led = &tpacpi_get_led(0)->led_classdev;
 	return 0;
 }
 
@@ -197,23 +199,27 @@ static int pcspkr_remove(struct platform_device *dev)
 	struct input_dev *pcspkr_dev = platform_get_drvdata(dev);
 
 	input_unregister_device(pcspkr_dev);
-	/* turn off the speaker */
-	pcspkr_event(NULL, EV_SND, SND_BELL, 0);
+	/* stop flashing */
+	hrtimer_cancel(&terminator);
+	terminate_flasher(NULL);
 
 	return 0;
 }
 
 static int pcspkr_suspend(struct device *dev)
 {
-	pcspkr_event(NULL, EV_SND, SND_BELL, 0);
+	/* stop flashing */
+	hrtimer_cancel(&terminator);
+	terminate_flasher(NULL);
 
 	return 0;
 }
 
 static void pcspkr_shutdown(struct platform_device *dev)
 {
-	/* turn off the speaker */
-	pcspkr_event(NULL, EV_SND, SND_BELL, 0);
+	/* stop flashing */
+	hrtimer_cancel(&terminator);
+	terminate_flasher(NULL);
 }
 
 static const struct dev_pm_ops pcspkr_pm_ops = {
