@@ -2,6 +2,9 @@
  * This defines the public interface to the thinkpad_acpi.
  */
 
+#ifndef THINKPAD_ACPI
+#define THINKPAD_ACPI
+
 #define TPACPI_LED_NUMLEDS 16
 
 /**
@@ -26,3 +29,5 @@ struct tpacpi_led_classdev {
  * \brief Gets an led controlled by the thinkpad acpi.
  */ 
 struct tpacpi_led_classdev *tpacpi_get_led(unsigned int index);
+
+#endif /* THINKPAD_ACPI */
