@@ -26,13 +26,14 @@ machine runs essentially out-of-the-box Arch), just copy the built modules into:
 
 And then call:
 
+    depmod
     mkinitcpio -p linux
 
-in order to rebuild the initcpio images. This is necessary because modules that
-are loaded early on such as thinkpad\_acpi will otherwise not have the updated
-version loaded. (Also remember to do any post-image-generation handling; in the
-author's case, that means copying the images to the /efi directory after
-mounting it.)
+in order to change to the updated module and rebuild the initcpio images. This
+is necessary because modules that are loaded early on such as thinkpad\_acpi
+will otherwise not have the updated version loaded. (Also remember to do any
+post-image-generation handling; in the author's case, that means copying the
+images to the /efi directory after mounting it.)
 
 You might need to compress the modules using gzip first; this is what I've done
 in the past and it works fine, but it may work even without compression. Note
